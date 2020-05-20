@@ -1,66 +1,79 @@
-# Shadowsocks Docker Tunnel
+# Shadowsocks/ShadowsocksR to SOCKS5/HTTP Proxy Docker Image
 
-Wraps your program with Shadowsocks (libev+simple_obfs) network tunnel fully contained in Docker. Also exposes SOCKS5 server to host machine. This allows you to have multiple Shadowsocks connections in different containers serving different programs running inside them through global proxy, or on host machine through SOCKS5 proxy.
+Convers Shadowsocks/ShadowsocksR connection to SOCKS5/HTTP proxy in Docker. This allows you to have multiple proxies on different ports connecting to different Shadowsocks/ShadowsocksR upstreams.
 
 Supports latest Docker for both Windows, Linux, and MacOS.
 
-### Related Projects
+## Related Projects
 
-* [openvpn-tunnel](https://hub.docker.com/r/curve25519xsalsa20poly1305/openvpn-tunnel/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-openvpn-tunnel)) - Wraps your program with OpenVPN network tunnel fully contained in Docker.
-* [openvpn-socks5](https://hub.docker.com/r/curve25519xsalsa20poly1305/openvpn-socks5/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-openvpn-socks5)) - Convers OpenVPN connection to SOCKS5 server in Docker.
-* [openvpn-aria2](https://hub.docker.com/r/curve25519xsalsa20poly1305/openvpn-aria2/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-openvpn-aria2)) - Extends `openvpn-socks5` with `aria2` support.
-* [shadowsocks-tunnel](https://hub.docker.com/r/curve25519xsalsa20poly1305/shadowsocks-tunnel/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-shadowsocks-tunnel)) - This project.
-* [shadowsocks-aria2](https://hub.docker.com/r/curve25519xsalsa20poly1305/shadowsocks-aria2/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-shadowsocks-aria2)) - Extends `shadowsocks-tunnel` with `aria2` support.
-* [shadowsocksr-tunnel](https://hub.docker.com/r/curve25519xsalsa20poly1305/shadowsocksr-tunnel/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-shadowsocksr-tunnel)) - Wraps your program with ShadowsocksR network tunnel fully contained in Docker. Also exposes SOCKS5 server to host machine.
-* [shadowsocksr-aria2](https://hub.docker.com/r/curve25519xsalsa20poly1305/shadowsocksr-aria2/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-shadowsocksr-aria2)) - Extends `shadowsocksr-tunnel` with `aria2` support.
+-   [OpenVPN](https://hub.docker.com/r/curve25519xsalsa20poly1305/openvpn/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-openvpn))
+-   [WireGuard](https://hub.docker.com/r/curve25519xsalsa20poly1305/wireguard/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-wireguard))
+-   [Shadowsocks/ShadowsocksR](https://hub.docker.com/r/curve25519xsalsa20poly1305/shadowsocks/) ([GitHub](https://github.com/curve25519xsalsa20poly1305/docker-shadowsocks))
 
 ## What it does?
 
-1. It starts Shadowsocks client mode `ss-redir` at default port of `1024`.
-2. It starts a SOCKS5 server at `$SOCKS5_PORT`, with optional authentication of `$SOCKS5_USER` and `$SOCKS5_PASS`.
-3. It setups iptables rules to redirect all internet traffics initiated inside the container through the Shadowsocks connection.
-4. It optionally runs the user specified CMD line from `docker run` positional arguments ([see Docker doc](https://docs.docker.com/engine/reference/run/#cmd-default-command-or-options)). The program will use the Shadowsocks connection inside the container.
-5. If user has provided CMD line, and `DAEMON_MODE` environment variable is not set to `true`, then after running the CMD line, it will shutdown the Shadowsocks client and SOCKS5 server, then terminate the container.
+1. It starts Shadowsocks/ShadowsocksR client mode `ss-redir` at default port of `1024`.
+2. It starts [3proxy](https://3proxy.ru/) server and listen on container-scoped port 1080 for SOCKS5 and 3128 for HTTP proxy on default. Proxy authentication can be enabled with `PROXY_USER` and `PROXY_PASS` environment variables. `SOCKS5_PROXY_PORT` and `HTTP_PROXY_PORT` can be used to change the default ports. For multi-user support, use sequence of `PROXY_USER_1`, `PROXY_PASS_1`, `PROXY_USER_2`, `PROXY_PASS_2`, etc.
+3. It optionally runs the executable defined by `PROXY_UP` when the proxy server is ready.
+4. If `ARIA2_PORT` is defined, it starts an aria2 RPC server on the port, and optionally runs the executable defined by `ARIA2_UP`.
+5. It setups iptables rules to redirect all internet traffics initiated inside the container through the Shadowsocks/ShadowsocksR connection.
+6. It optionally runs the user specified CMD line from `docker run` positional arguments ([see Docker doc](https://docs.docker.com/engine/reference/run/#cmd-default-command-or-options)). The program will use the Shadowsocks/ShadowsocksR connection inside the container.
+7. If user has provided CMD line, and `DAEMON_MODE` environment variable is not set to `true`, then after running the CMD line, it will shutdown the Shadowsocks/ShadowsocksR client and proxy server, then terminate the container.
 
 ## How to use?
 
-Shadowsocks connection options are specified through these container environment variables:
+Shadowsocks/ShadowsocksR connection options are specified through these container environment variables:
 
-* `SS_SERVER_ADDR` (Default: `"0.0.0.0"`) - Remote server address, can either be a domain name or IP address
-* `SS_SERVER_PORT` (Default: `"1080"`) - Remote server port
-* `SS_SERVER_PASS` (Default: `""`) - Remote server password
-* `SS_METHOD` (Default: `"chacha20-ietf-poly1305"`) - Encryption method cipher. Can be: `"aes-128-gcm"`, `"aes-192-gcm"`, `"aes-256-gcm"`, `"rc4-md5"`, `"aes-128-cfb"`, `"aes-192-cfb"`, `"aes-256-cfb"`, `"aes-128-ctr"`, `"aes-192-ctr"`, `"aes-256-ctr"`, `"bf-cfb"`, `"camellia-128-cfb"`, `"camellia-192-cfb"`, `"camellia-256-cfb"`, `"chacha20-ietf-poly1305"`, `"salsa20"`, `"chacha20 and chacha20-ietf"`
-* `SS_OBFS` (Default: `"plain"`) - `simple_obfs`'s scheme, can be `"plain"`, `"http"`, and `"tls"`. `"plain"` will disable the obfuscation plugin.
-* `SS_OBFS_HOST` (Default: `""`) - `simple_obfs`'s `host` parameter
-* `SS_OBFS_URI` (Default: `""`) - `simple_obfs`'s `uri` parameter
-* `SS_OBFS_HTTP_METHOD` (Default: `""`) - `simple_obfs`'s `http_method` parameter
-* `SS_KEY` (Default: `""`) - Set the key directly. The key should be encoded with URL-safe Base64
-* `TIMEOUT` (Default: `"300"`) - Set the socket timeout in seconds
-* `SS_USER` (Default: `""`) - Run as a specific user
-* `SS_FAST_OPEN` (Default: `"false"`) - Set to `"true"` for TCP fast open
-* `SS_REUSE_PORT` (Default: `"false"`) - Enable port reuse
-* `SS_NOFILE` (Default: `"1024"`) - Specify max number of open files, 1024 is the minimum possible value
-* `SS_DSCP` (Default: `"1024"`) - A JSON object to specify additional TOS/DSCP listening ports
-* `SS_MODE` (Default: `"tcp_and_udp"`) - Can be `"tcp_only"`, `"tcp_and_udp"`, and `"udp_only"`
-* `SS_MTU` (Default: `""`) - Specify the MTU in integer of your network interface
-* `SS_MPTCP` (Default: `"false"`) - Enable Multipath TCP
-* `SS_IPV6_FIRST` (Default: `"false"`) - Resovle hostname to IPv6 address first
-* `SS_USE_SYSLOG` (Default: `"false"`) - Use Syslog
-* `SS_NO_DELAY` (Default: `"false"`) - Enable TCP_NODELAY
-* `SS_LOCAL_ADDR` (Default: `"0.0.0.0"`) - `ss-redir` local listening interface
-* `SS_LOCAL_PORT` (Default: `"1024"`) - `ss-redir` local listening port, must be different from `SOCKS5_PORT`
+-   `SS_URI` (Default: `""`) - [SS (SIP002)](https://github.com/shadowsocks/shadowsocks-org/wiki/SIP002-URI-Scheme) or [SSR](https://github.com/shadowsocksr-backup/shadowsocks-rss/wiki/SSR-QRcode-scheme) URI scheme. When set, will override all the following `SS_` options
+-   `SS_VARIANT` (Default: `ssr`) - Specify the protocol variant as either `ss` or `ssr`
+-   `SS_SERVER_ADDR` (Default: `"0.0.0.0"`) - Remote server address, can either be a domain name or IP address
+-   `SS_SERVER_PORT` (Default: `"1080"`) - Remote server port
+-   `SS_SERVER_PASS` (Default: `""`) - Remote server password
+-   `SS_METHOD` (Default: `"chacha20-ietf-poly1305"`) - Encryption method cipher. Can be: `"aes-128-gcm"`, `"aes-192-gcm"`, `"aes-256-gcm"`, `"rc4-md5"`, `"aes-128-cfb"`, `"aes-192-cfb"`, `"aes-256-cfb"`, `"aes-128-ctr"`, `"aes-192-ctr"`, `"aes-256-ctr"`, `"bf-cfb"`, `"camellia-128-cfb"`, `"camellia-192-cfb"`, `"camellia-256-cfb"`, `"chacha20-ietf-poly1305"`, `"salsa20"`, `"chacha20 and chacha20-ietf"`
+-   `SS_PLUGIN` (Default: `""`) - **[SS ONLY]** [SIP003](https://shadowsocks.org/en/spec/Plugin.html) plugin, Can be: `"obfs-local"`
+-   `SS_PLUGIN_OPTS` (Default: `""`) - **[SS ONLY]** [SIP003](https://shadowsocks.org/en/spec/Plugin.html) plugin options, list of `keyonly` or `key=value` pairs separated by `;` e.g. `"obfs=tls;obfs-host=www.baidu.com;obfs-uri=/;http-method=GET;mptcp;fast-open"`, supported `obfs`: `tls`, `http`
+-   `SS_PROTO` (Default: `"origin"`) - **[SSR ONLY]** [ShadowsocksR Protocol](https://github.com/shadowsocksr-backup/shadowsocks-rss/wiki/obfs) plugin enforcing data integrity, and perform segmentation to hide real data length. Can be: `"origin"`, `"auth_sha1"`, `"auth_sha1_v2"`, `"auth_sha1_v4"`, `"auth_aes128_md5"`, `"auth_aes128_sha1"`, `"auth_chain_a"`. `"origin"` will disable the protocol plugin.
+-   `SS_PROTO_PARAM` (Default: `""`) - **[SSR ONLY]** [ShadowsocksR Protocol](https://github.com/shadowsocksr-backup/shadowsocks-rss/wiki/obfs) plugin parameters. Currently no protocol plugin is using it.
+-   `SS_OBFS` (Default: `"plain"`) - **[SSR ONLY]** [ShadowsocksR Obfuscation](https://github.com/shadowsocksr-backup/shadowsocks-rss/wiki/obfs) plugin for data steganography. Can be `"plain"`, `"http_simple"`, `"http_post"`, and `"tls1.2_ticket_auth"`. `"plain"` will disable the obfuscation plugin.
+-   `SS_OBFS_PARAM` (Default: `""`) - **[SSR ONLY]** [ShadowsocksR Obfuscation](https://github.com/shadowsocksr-backup/shadowsocks-rss/wiki/obfs) plugin parameters. Usually is the host names in the obfuscated data datagram's fields.
+-   `SS_KEY` (Default: `""`) - **[SS ONLY]** Set the key directly. The key should be encoded with URL-safe Base64
+-   `SS_TIMEOUT` (Default: `"300"`) - Set the socket timeout in seconds
+-   `SS_USER` (Default: `""`) - Run as a specific user
+-   `SS_FAST_OPEN` (Default: `"false"`) - Set to `"true"` for TCP fast open
+-   `SS_REUSE_PORT` (Default: `"false"`) - **[SS ONLY]** Enable port reuse
+-   `SS_NOFILE` (Default: `"1024"`) - Specify max number of open files, 1024 is the minimum possible value
+-   `SS_DSCP` (Default: `""`) - **[SS ONLY]** A JSON object to specify additional TOS/DSCP listening ports
+-   `SS_MODE` (Default: `"tcp_and_udp"`) - Can be `"tcp_only"`, `"tcp_and_udp"`, and `"udp_only"`
+-   `SS_MTU` (Default: `""`) - Specify the MTU in integer of your network interface
+-   `SS_MPTCP` (Default: `"false"`) - Enable Multipath TCP
+-   `SS_IPV6_FIRST` (Default: `"false"`) - Resovle hostname to IPv6 address first
+-   `SS_USE_SYSLOG` (Default: `"false"`) - **[SS ONLY]** Use Syslog
+-   `SS_NO_DELAY` (Default: `"false"`) - **[SS ONLY]** Enable TCP_NODELAY
+-   `SS_LOCAL_ADDR` (Default: `"0.0.0.0"`) - `ss-redir` local listening interface
+-   `SS_LOCAL_PORT` (Default: `"1024"`) - `ss-redir` local listening port, must be different from `SOCKS5_PROXY_PORT`
+-   `SS_UP` (Default: `""`) - optional command to be executed when Shadowsocks/ShadowsocksR connection becomes stable
 
-SOCKS5 server options are specified through these container environment variables:
+Proxy server options are specified through these container environment variables:
 
-* `SOCKS5_PORT` (Default: `"1080"`) - SOCKS5 server listening port
-* `SOCKS5_USER` (Default: `""`) - SOCKS5 server authentication username
-* `SOCKS5_PASS` (Default: `""`) - SOCKS5 server authentication password
+-   `SOCKS5_PROXY_PORT` (Default: `"1080"`) - SOCKS5 server listening port
+-   `HTTP_PROXY_PORT` (Default: `"3128"`) - HTTP proxy server listening port
+-   `PROXY_USER` (Default: `""`) - Proxy server authentication username
+-   `PROXY_PASS` (Default: `""`) - Proxy server authentication password
+-   `PROXY_USER_<N>` (Default: `""`) - The `N`-th username for multi-user proxy authentication. `N` starts from 1.
+-   `PROXY_PASS_<N>` (Default: `""`) - The `N`-th password for multi-user proxy authentication. `N` starts from 1.
+-   `PROXY_UP` (Default: `""`) - optional command to be executed when proxy server becomes stable
+
+Arai2 options are specified through these container environment variables:
+
+-   `ARIA2_PORT` (Default: `""`) - JSON-RPC server listening port
+-   `ARIA2_PASS` (Default: `""`) - `--rpc-secret` password
+-   `ARIA2_PATH` (Default: `"."`) - The directory to store the downloaded file
+-   `ARIA2_ARGS` (Default: `""`) - BASH-style escaped command line to append to the `aria2c` command
+-   `ARIA2_UP` (Default: `""`) - optional command to be executed when aria2 JSON-RPC server becomes stable
 
 Other container environment variables:
 
-* `DAEMON_MODE` (Default: `"false"`) - force enter daemon mode when CMD line is specified
-* `SOCKS5_UP` (Default: `""`) - optional command to be executed when SOCKS5 server becomes stable
-* `SS_UP` (Default: `""`) - optional command to be executed when Shadowsocks connection becomes stable
+-   `DAEMON_MODE` (Default: `"false"`) - force enter daemon mode when CMD line is specified
 
 ### Simple Example
 
@@ -82,8 +95,9 @@ NAME="myss"
 PORT="7777"
 docker run --name "${NAME}" -dit --rm --device=/dev/net/tun --cap-add=NET_ADMIN \
     -e SERVER_ADDR="1.2.3.4" \
+    -e DAEMON_MODE="true" \
     -p "${PORT}":1080 \
-    curve25519xsalsa20poly1305/shadowsocks-tunnel \
+    curve25519xsalsa20poly1305/shadowsocks \
     curl ifconfig.co/json
 ```
 
@@ -106,37 +120,6 @@ To stop the daemon, run this:
 NAME="myss"
 docker stop "${NAME}"
 ```
-
-### Extends Image
-
-This image only includes `curl` and `wget` for most basic HTTP request usage. If the program you want to run is not available in this image, you can easily extend this image to include anything you need.
-
-Here is a very simple example `Dockerfile` that will install [aria2](http://aria2.github.io/) in its derived image.
-
-```Dockerfile
-FROM curve25519xsalsa20poly1305/shadowsocks-tunnel
-RUN apk add --no-cache aria2
-```
-
-Build this image with:
-
-```bash
-# Unix & Windows
-docker build -t shadowsocks-aria2 .
-```
-
-Finally run it with
-
-```bash
-docker run -it --rm --device=/dev/net/tun --cap-add=NET_ADMIN \
-    -e SERVER_ADDR="1.2.3.4" \
-    -v "${PWD}":/downloads:rw \
-    -w /downloads \
-    shadowsocks-aria2 \
-    arai2c http://example.com/index.html
-```
-
-It will download the file using `aria2c` to your host's current directory.
 
 ## Contributing
 

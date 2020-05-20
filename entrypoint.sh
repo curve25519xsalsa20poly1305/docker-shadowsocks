@@ -23,145 +23,124 @@ function on_kill {
     kill "${ENTRYPOINT_PID}" 2> /dev/null
 }
 
+function log {
+    local LEVEL="$1"
+    local MSG="$(date '+%D %T') [${LEVEL}] $2"
+    case "${LEVEL}" in
+        INFO*)      MSG="\x1B[94m${MSG}";;
+        WARNING*)   MSG="\x1B[93m${MSG}";;
+        ERROR*)     MSG="\x1B[91m${MSG}";;
+        *)
+    esac
+    echo -e "${MSG}"
+}
+
 export ENTRYPOINT_PID="${BASHPID}"
 
 trap "on_kill" EXIT
 trap "on_kill" SIGINT
 
 SS_CONFIG="/etc/shadowsocks/config.json"
-
-cat << EOF > "${SS_CONFIG}"
-{
-    "server": "${SS_SERVER_ADDR}",
-    "server_port": ${SS_SERVER_PORT},
-    "password": "${SS_SERVER_PASS}",
-    "timeout": ${SS_TIMEOUT},
-    "method": "${SS_METHOD}",
-EOF
-
-if [[ -n "${SS_OBFS}" ]]; then
-    if [[ "${SS_OBFS}" == "http" || "${SS_OBFS}" == "tls" ]]; then
-        SS_OBFS_OPTS="obfs=${SS_OBFS}"
-        if [[ -n "${SS_OBFS_HOST}" ]]; then
-            SS_OBFS_OPTS+=";obfs-host=${SS_OBFS_HOST}"
-        fi
-        if [[ -n "${SS_OBFS_URI}" ]]; then
-            SS_OBFS_OPTS+=";obfs-uri=${SS_OBFS_URI}"
-        fi
-        if [[ -n "${SS_OBFS_HTTP_METHOD}" ]]; then
-            SS_OBFS_OPTS+=";http-method=${SS_OBFS_HTTP_METHOD}"
-        fi
-        if [[ "${SS_FAST_OPEN}" == "true" ]]; then
-            SS_OBFS_OPTS+=";fast-open"
-        fi
-        if [[ "${SS_MPTCP}" == "true" ]]; then
-            SS_OBFS_OPTS+=";mptcp"
-        fi
-        cat << EOF >> "${SS_CONFIG}"
-    "plugin": "obfs-local",
-    "plugin_opts": "${SS_OBFS_OPTS}",
-EOF
-    fi
-fi
-
-if [[ -n "${SS_KEY}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "key": "${SS_KEY}",
-EOF
-fi
-
-if [[ -n "${SS_TIMEOUT}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "timeout": ${SS_TIMEOUT},
-EOF
-fi
-
-if [[ -n "${SS_USER}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "user": "${SS_USER}",
-EOF
-fi
-
-if [[ -n "${SS_FAST_OPEN}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "fast_open": ${SS_FAST_OPEN},
-EOF
-fi
-
-if [[ -n "${SS_REUSE_PORT}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "reuse_port": ${SS_REUSE_PORT},
-EOF
-fi
-
-if [[ -n "${SS_NOFILE}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "nofile": ${SS_NOFILE},
-EOF
-fi
-
-if [[ -n "${SS_DSCP}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "dscp": ${SS_DSCP},
-EOF
-fi
-
-if [[ -n "${SS_MODE}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "mode": "${SS_MODE}",
-EOF
-fi
-
-if [[ -n "${SS_MTU}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "mtu": ${SS_MTU},
-EOF
-fi
-
-if [[ -n "${SS_MPTCP}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "mptcp": ${SS_MPTCP},
-EOF
-fi
-
-if [[ -n "${SS_IPV6_FIRST}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "ipv6_first": ${SS_IPV6_FIRST},
-EOF
-fi
-
-if [[ -n "${SS_USE_SYSLOG}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "use_syslog": ${SS_USE_SYSLOG},
-EOF
-fi
-
-if [[ -n "${SS_NO_DELAY}" ]]; then
-    cat << EOF >> "${SS_CONFIG}"
-    "no_delay": ${SS_NO_DELAY},
-EOF
-fi
-
-cat << EOF >> "${SS_CONFIG}"
-    "local_address": "${SS_LOCAL_ADDR}",
-    "local_port": ${SS_LOCAL_PORT}
-}
-EOF
-
-SS_SERVER_IP=$(getent hosts "${SS_SERVER_ADDR}" | awk '{ print $1 }')
+PROXY_CONFIG="/etc/3proxy.cfg"
+PROXY_LOG="/var/log/3proxy.log"
 
 mkfifo /shadowsocks-fifo
-spawn ss-redir -c "${SS_CONFIG}" --up shadowsocks-up.sh
+spawn runss
+log "INFO" "Spawn Shadowsocks"
 
-if [[ -n "${SOCKS5_PORT}" ]]; then
-    mkfifo /socks5-fifo
-    SOCKS5_UP=socks5-up.sh spawn socks5
-    cat /socks5-fifo > /dev/null
-    rm -f /socks5-fifo
+declare -A PROXY_USERS
+
+function check_and_add_proxy_user {
+    local user="${!1}"
+    local pass="${!2}"
+    if [[ -z "${user}" ]]; then
+        return 1
+    fi
+    if [[ -z "${pass}" ]]; then
+        log "ERROR" "empty password for user ${user} is not allowed!"
+        exit 1
+    fi
+    if [[ -n "${PROXY_USERS["${user}"]}" ]]; then
+        log "WARNING" "duplicated user ${user}, overwriting previous password."
+    fi
+    PROXY_USERS["${user}"]="${pass}"
+    log "INFO" "Add proxy user ${user}"
+}
+
+if [[ -n "${SOCKS5_PROXY_PORT}" || -n "${HTTP_PROXY_PORT}" ]]; then
+
+    # single user short-hand
+    check_and_add_proxy_user PROXY_USER PROXY_PASS
+
+    # backward compatibility
+    check_and_add_proxy_user SOCKS5_USER SOCKS5_PASS
+
+    # multi-user support
+    USER_SEQ="1"
+    USER_SEQ_END="false"
+    while [[ "${USER_SEQ_END}" != "true" ]]; do
+        check_and_add_proxy_user "PROXY_USER_${USER_SEQ}" "PROXY_PASS_${USER_SEQ}"
+        STATUS=$?
+        if [[ "${STATUS}" != 0 ]]; then
+            USER_SEQ_END="true"
+        fi
+        USER_SEQ=$(( "${USER_SEQ}" + 1 ))
+    done
+
+    echo "nscache 65536" > "${PROXY_CONFIG}"
+    for PROXY_USER in "${!PROXY_USERS[@]}"; do
+        echo "users \"${PROXY_USER}:$(mycrypt "$(openssl rand -hex 16)" "${PROXY_USERS["${PROXY_USER}"]}")\"" >> "${PROXY_CONFIG}"
+    done
+    echo "log \"${PROXY_LOG}\" D" >> "${PROXY_CONFIG}"
+    echo "logformat \"- +_L%t.%. %N.%p %E %U %C:%c %R:%r %O %I %h %T\"" >> "${PROXY_CONFIG}"
+    echo "rotate 30" >> "${PROXY_CONFIG}"
+    echo "external 0.0.0.0" >> "${PROXY_CONFIG}"
+    echo "internal 0.0.0.0" >> "${PROXY_CONFIG}"
+    if [[ "${#PROXY_USERS[@]}" -gt 0 ]]; then
+        echo "auth strong" >> "${PROXY_CONFIG}"
+    fi
+    echo "flush" >> "${PROXY_CONFIG}"
+    for PROXY_USER in "${!PROXY_USERS[@]}"; do
+        echo "allow \"${PROXY_USER}\"" >> "${PROXY_CONFIG}"
+    done
+    echo "maxconn 384" >> "${PROXY_CONFIG}"
+    if [[ -n "${SOCKS5_PROXY_PORT}" ]]; then
+        echo "socks -p${SOCKS5_PROXY_PORT}" >> "${PROXY_CONFIG}"
+    fi
+    if [[ -n "${HTTP_PROXY_PORT}" ]]; then
+        echo "proxy -p${HTTP_PROXY_PORT}" >> "${PROXY_CONFIG}"
+    fi
+
+    log "INFO" "Write 3proxy config"
+
+    spawn 3proxy "${PROXY_CONFIG}"
+    log "INFO" "Spawn 3proxy"
+
+    PROXY_ENABLED="true"
+fi
+
+if [[ -n "${ARIA2_PORT}" ]]; then
+    cmd=(aria2c --enable-rpc --disable-ipv6 --rpc-listen-all --rpc-listen-port="${ARIA2_PORT}")
+    if [[ -n "${ARIA2_PASS}" ]]; then
+        cmd+=(--rpc-secret "${ARIA2_PASS}")
+    fi
+    if [[ -n "${ARIA2_PATH}" ]]; then
+        cmd+=(--dir "${ARIA2_PATH}")
+    fi
+    if [[ -n "${ARIA2_ARGS}" ]]; then
+        eval cmd\+\=\( ${ARIA2_ARGS} \)
+    fi
+    spawn "${cmd[@]}"
+    log "INFO" "Spawn aria2c"
+    ARIA2_ENABLED="true"
 fi
 
 cat /shadowsocks-fifo > /dev/null
 rm -f /shadowsocks-fifo
+log "INFO" "Shadowsocks become stable"
+
+SS_SERVER_IP="$(getent hosts "$(cat "${SS_CONFIG}" | jq -r '.server')" | awk '{ print $1 }')"
+SS_LOCAL_PORT="$(cat "${SS_CONFIG}" | jq -r '.local_port')"
 
 iptables -t nat -N SS_TCP
 iptables -t nat -A SS_TCP -p tcp -d "${SS_SERVER_IP}" -j RETURN
@@ -192,15 +171,25 @@ iptables -t mangle -A SS_UDP -p udp -j DROP
 iptables -t mangle -A SS_UDP -p udp -j TPROXY --on-port "${SS_LOCAL_PORT}" --tproxy-mark 0x01/0x01
 iptables -t mangle -A PREROUTING -p udp -j SS_UDP
 
-if [[ -n "${SOCKS5_UP}" ]]; then
-    "${SOCKS5_UP}" &
+log "INFO" "Updated iptables"
+
+if [[ "${ARIA2_ENABLED}" == "true" && -n "${ARIA2_UP}" ]]; then
+    spawn "${ARIA2_UP}"
+    log "INFO" "Spawn aria2 up script: ${ARIA2_UP}"
+fi
+
+if [[ "${PROXY_ENABLED}" == "true" && -n "${PROXY_UP}" ]]; then
+    spawn "${PROXY_UP}"
+    log "INFO" "Spawn proxy up script: ${PROXY_UP}"
 fi
 
 if [[ -n "${SS_UP}" ]]; then
-    "${SS_UP}" &
+    spawn "${SS_UP}"
+    log "INFO" "Spawn Shadowsocks up script: ${SS_UP}"
 fi
 
 if [[ $# -gt 0 ]]; then
+    log "INFO" "Execute command line: $@"
     "$@"
 fi
 
