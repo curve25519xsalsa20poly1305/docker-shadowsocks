@@ -95,12 +95,13 @@ func parseSSURI(u *url.URL) (conf *ssconf, err error) {
 		err = fmt.Errorf("invalid SS URI user info: %s", string(b))
 		return
 	}
-	conf = &ssconf{
-		Server:     u.Hostname(),
-		ServerPort: u.Port(),
-		Method:     userinfo[0],
-		Password:   userinfo[1],
+	if conf, err = parseSSEnv(); err != nil {
+		return
 	}
+	conf.Server = u.Hostname()
+	conf.ServerPort = u.Port()
+	conf.Method = userinfo[0]
+	conf.Password = userinfo[1]
 	q := u.Query()
 	pluginQ := q.Get("plugin")
 	if pluginQ != "" {
@@ -138,14 +139,15 @@ func parseSSRURI(u *url.URL) (conf *ssrconf, err error) {
 		err = fmt.Errorf("failed to decode SSR password Base64: %w", err)
 		return
 	}
-	conf = &ssrconf{
-		Server:     firstPart[0],
-		ServerPort: newInt(port),
-		Protocol:   firstPart[2],
-		Method:     firstPart[3],
-		OBFS:       firstPart[4],
-		Password:   string(b),
+	if conf, err = parseSSREnv(); err != nil {
+		return
 	}
+	conf.Server = firstPart[0]
+	conf.ServerPort = newInt(port)
+	conf.Protocol = firstPart[2]
+	conf.Method = firstPart[3]
+	conf.OBFS = firstPart[4]
+	conf.Password = string(b)
 	if len(parts) == 2 && parts[1] != "" {
 		if q, err = url.ParseQuery(parts[1]); err != nil {
 			err = fmt.Errorf("failed to parse SSR URI query part: %w", err)

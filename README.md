@@ -82,7 +82,7 @@ The following example will run `curl ifconfig.co/json` through Shadowsocks serve
 ```bash
 docker run -it --rm --device=/dev/net/tun --cap-add=NET_ADMIN \
     -e SERVER_ADDR="1.2.3.4" \
-    curve25519xsalsa20poly1305/shadowsocks-tunnel \
+    curve25519xsalsa20poly1305/shadowsocks \
     curl ifconfig.co/json
 ```
 
@@ -95,10 +95,8 @@ NAME="myss"
 PORT="7777"
 docker run --name "${NAME}" -dit --rm --device=/dev/net/tun --cap-add=NET_ADMIN \
     -e SERVER_ADDR="1.2.3.4" \
-    -e DAEMON_MODE="true" \
     -p "${PORT}":1080 \
-    curve25519xsalsa20poly1305/shadowsocks \
-    curl ifconfig.co/json
+    curve25519xsalsa20poly1305/shadowsocks
 ```
 
 Then you run commads using `docker exec`:
